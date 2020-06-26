@@ -6,7 +6,7 @@ This sketch was made for a [Heltec CubeCell](https://heltec.org/project/htcc-ab0
 
 ### Hookup guide:
 
-
+1. Install support for the CubeCell Boards: https://github.com/HelTecAutomation/ASR650x-Arduino/blob/master/InstallGuide/debian_ubuntu.md
 
 ### History:
 Adapted from [Claustn](https://github.com/Claustn/esp8266-kamstrup-mqtt) to use Lora,TTN instead of WiFi,MQTT.
