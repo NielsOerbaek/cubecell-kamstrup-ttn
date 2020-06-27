@@ -1,18 +1,19 @@
 #include "LoRaWan_APP.h"
 #include "Arduino.h"
-#include "softSerial.h"
 
 #include "gcm.h"
 #include "mbusparser.h"
 #include "secrets.h" // <-- create this file using "secrets.h.TEMPLATE"
-
+#include "KamstrupSerial.h"
 
 #define DEBUG_BEGIN Serial.begin(115200);
 #define DEBUG_PRINT(x) Serial.print(x);
 #define DEBUG_PRINTLN(x) Serial.println(x);
 
-/* Second serial port for meter reading */
-softSerial softwareSerial(GPIO1 /*TX pin*/, GPIO2 /*RX pin*/);
+/* Second serial port for meter reading 
+ * SoftwareSerial isnt really working, so we've made a small custom library that does the trick. 
+*/
+#define KAMSTRUP_DATA_PIN GPIO0
 #define BAUD_RATE 2400
 
 const size_t headersize = 11;
@@ -26,7 +27,7 @@ MbusStreamParser streamParser(receiveBuffer, sizeof(receiveBuffer));
 mbedtls_gcm_context m_ctx;
 
 int8_t TX_INTERVAL = 110; // Time to wait between transmissions, not including TX windows
-//int8_t TX_INTERVAL = 20; // Time to wait between transmissions, not including TX windows
+//int8_t TX_INTERVAL = 10; // Time to wait between transmissions, not including TX windows
 
 /* LoraWan Config
 /*LoraWan channelsmask, default channels 0-7*/ 
@@ -44,8 +45,11 @@ bool keepNet = LORAWAN_NET_RESERVE;
 /* Indicates if the node is sending confirmed or unconfirmed messages */
 bool isTxConfirmed = LORAWAN_UPLINKMODE;
 /* Application port */
-uint8_t appPort = 3;
+uint8_t appPort = 2;
+
+/*the application data transmission duty cycle.  value in [ms].*/
 uint32_t appTxDutyCycle = 0;
+
 uint8_t confirmedNbTrials = 4;
 
 /* Prepares the payload of the frame */
@@ -93,17 +97,19 @@ uint8_t plaintext[10];
 
 void setup() {
   DEBUG_BEGIN
-  
+
+  /*
   Serial.println("DEVICE_STATE_INIT");
   deviceState = DEVICE_STATE_INIT;
   LoRaWAN.ifskipjoin();
-  MeterData md = parseMbusFrame(decryptedFrame);
-  
-  Serial.println("Initiating SoftSerial on RX=GPIO2");
-  softwareSerial.begin(BAUD_RATE);
+  */
+  Serial.println("Initiating KamstrupSerial on RX=GPIO0");
+  kamstrup_serial_init(KAMSTRUP_DATA_PIN);
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
   Serial.println("Setup completed");
+
+  read_frame();
 }
 
 void loop()
@@ -112,7 +118,9 @@ void loop()
   {
     case DEVICE_STATE_INIT:
     {
-      Serial.println("DEVICE_STATE_INIT");
+#if(AT_SUPPORT)
+      getDevParam();
+#endif
       printDevParam();
       LoRaWAN.init(loraWanClass,loraWanRegion);
       deviceState = DEVICE_STATE_JOIN;
@@ -120,27 +128,22 @@ void loop()
     }
     case DEVICE_STATE_JOIN:
     {
-      Serial.println("DEVICE_STATE_JOIN");
       LoRaWAN.join();
       break;
     }
     case DEVICE_STATE_SEND:
     {
-      Serial.println("DEVICE_STATE_SEND");
       read_frame();
       prepareTxFrame( appPort );
-      if(payload[2] > 0) {
-        LoRaWAN.send();
-      }
-      deviceState = DEVICE_STATE_SEND;
+      LoRaWAN.send();
+      deviceState = DEVICE_STATE_CYCLE;
       break;
     }
     case DEVICE_STATE_CYCLE:
     {
-      Serial.println("DEVICE_STATE_CYCLE");
       // Schedule next packet transmission
-      // We dont want to sleep
-      LoRaWAN.cycle(0);
+      txDutyCycleTime = appTxDutyCycle + randr( 0, APP_TX_DUTYCYCLE_RND );
+      LoRaWAN.cycle(txDutyCycleTime);
       deviceState = DEVICE_STATE_SLEEP;
       break;
     }
@@ -151,7 +154,6 @@ void loop()
     }
     default:
     {
-      Serial.println("Default");
       deviceState = DEVICE_STATE_INIT;
       break;
     }
@@ -165,13 +167,27 @@ void read_frame() {
   read_cnt = 0;
   break_time = millis() + TX_INTERVAL*1000;
   time_left;
+  int width = 0;
   while(true) {
     if(millis() > break_time) {
         DEBUG_PRINTLN("Timeout! Got "+String(read_cnt)+" frames.");
         return;            
       }
-    while (softwareSerial.available() > 0) {
-      if (streamParser.pushData(softwareSerial.read())) {
+      if((millis()-break_time)%1000 == 0) {
+        Serial.println();
+        width = 0;
+        delay(1);
+        
+      }
+    while (kamstrup_available() > 0) {
+      uint8_t val = kamstrup_read();
+      width++;
+      if(width%20 == 0) {
+        Serial.println("");
+      } 
+      printHex2(val);
+      if (streamParser.pushData(val)) {
+        Serial.println();
         VectorView frame = streamParser.getFrame();
         if (streamParser.getContentType() == MbusStreamParser::COMPLETE_FRAME) {
           DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
@@ -282,6 +298,7 @@ void printHex2(unsigned v) {
   if (v < 16)
     Serial.print('0');
   Serial.print(v, HEX);
+  Serial.print(" ");
 }
 
 void reset_payload() {
