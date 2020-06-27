@@ -24,7 +24,6 @@
  *  http://csrc.nist.gov/encryption/aes/rijndael/Rijndael.pdf
  *  http://csrc.nist.gov/publications/fips/fips197/fips-197.pdf
  */
- 
 
 #if !defined(MBEDTLS_CONFIG_FILE)
 #include "config.h"
@@ -39,14 +38,13 @@
 #include "aes.h"
 #include "platform.h"
 #include "platform_util.h"
-/*
 #if defined(MBEDTLS_PADLOCK_C)
 #include "padlock.h"
 #endif
 #if defined(MBEDTLS_AESNI_C)
 #include "aesni.h"
 #endif
-*/
+
 #if defined(MBEDTLS_SELF_TEST)
 #if defined(MBEDTLS_PLATFORM_C)
 #include "platform.h"

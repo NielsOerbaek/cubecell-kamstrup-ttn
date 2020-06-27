@@ -4,7 +4,7 @@ uint8_t _rxpin = GPIO0;
 uint8_t s_currentRx = ~0;
 uint16_t s_timeDelay = 417;
 
-RingBuffer<uint8_t, 512> s_rxDataBuffer = RingBuffer<uint8_t, 512>();
+RingBuffer<uint8_t, 128> s_rxDataBuffer = RingBuffer<uint8_t, 128>();
 bool s_overflow = false;
 
 void kamstrup_serial_init(uint8_t pin) {
@@ -33,6 +33,7 @@ void kamstrup_stop() {
   if (s_currentRx != uint8_t(~0)) {
     detachInterrupt(s_currentRx);
     s_currentRx = ~0;
+    kamstrup_flush();
   }
 }
 
@@ -47,11 +48,9 @@ void kamstrup_receiveByte(void)
 
   delayMicroseconds(s_timeDelay);
 
-  while (bitCount < 10) {
-    if (!digitalRead(s_currentRx)) {
-      if (bitCount > 0 && bitCount < 9) {
+  while (bitCount < 8) {
+    if (!digitalRead(s_currentRx)) { 
         tempByte |= (1 << bitCount);
-      }
     }
     bitCount++;
     delayMicroseconds(s_timeDelay);

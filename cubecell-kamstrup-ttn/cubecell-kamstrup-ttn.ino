@@ -98,18 +98,15 @@ uint8_t plaintext[10];
 void setup() {
   DEBUG_BEGIN
 
-  /*
-  Serial.println("DEVICE_STATE_INIT");
+  DEBUG_PRINTLN("DEVICE_STATE_INIT");
   deviceState = DEVICE_STATE_INIT;
   LoRaWAN.ifskipjoin();
-  */
-  Serial.println("Initiating KamstrupSerial on RX=GPIO0");
+  
+  DEBUG_PRINTLN("Initiating KamstrupSerial on RX=GPIO0");
   kamstrup_serial_init(KAMSTRUP_DATA_PIN);
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
-  Serial.println("Setup completed");
-
-  read_frame();
+  DEBUG_PRINTLN("Setup completed");
 }
 
 void loop()
@@ -162,7 +159,7 @@ void loop()
 
 
 void read_frame() {
-  Serial.println("read_frame");
+  DEBUG_PRINTLN("read_frame");
   reset_payload();
   read_cnt = 0;
   break_time = millis() + TX_INTERVAL*1000;
@@ -173,49 +170,48 @@ void read_frame() {
         DEBUG_PRINTLN("Timeout! Got "+String(read_cnt)+" frames.");
         return;            
       }
-      if((millis()-break_time)%1000 == 0) {
-        Serial.println();
+      if((millis()-break_time)%3000 == 0) {
+        DEBUG_PRINTLN("");
         width = 0;
         delay(1);
         
       }
     while (kamstrup_available() > 0) {
       uint8_t val = kamstrup_read();
-      width++;
       if(width%20 == 0) {
-        Serial.println("");
+        DEBUG_PRINTLN("");
       } 
+      width++;
       printHex2(val);
       if (streamParser.pushData(val)) {
-        Serial.println();
+        DEBUG_PRINTLN("\nPushdata returned True");
         VectorView frame = streamParser.getFrame();
         if (streamParser.getContentType() == MbusStreamParser::COMPLETE_FRAME) {
           DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
-          if (!decrypt(frame))
-          {
+          if (!decrypt(frame)){
             DEBUG_PRINTLN(F("Decrypt failed"));
+          } else {
+            MeterData md = parseMbusFrame(decryptedFrame);
+            if(md.activePowerPlusValid && md.activePowerMinusValid) {
+              read_cnt++;
+              payload[6] = read_cnt;
+              DEBUG_PRINTLN("Decrypt ok, cnt:"+String(read_cnt));
+              payload[0] = do_average(payload[0], md.activePowerPlus, read_cnt);
+              payload[3] = do_average(payload[3], md.activePowerMinus, read_cnt);
+              
+              if(payload[1] == -1) { payload[1] = md.activePowerPlus; }
+              else { payload[1] = std::min((int) payload[1], (int) md.activePowerPlus); }
+              
+              if(payload[2] == -1) { payload[2] = md.activePowerPlus; }
+              else { payload[2] = std::min((int) payload[2], (int) md.activePowerPlus); }
+              
+              if(payload[4] == -1) { payload[4] = md.activePowerMinus; }
+              else { payload[4] = std::min((int) payload[4], (int) md.activePowerMinus); }
+              
+              if(payload[5] == -1) { payload[5] = md.activePowerMinus; }
+              else { payload[5] = std::min((int) payload[5], (int) md.activePowerMinus); }
+            }
           }
-          MeterData md = parseMbusFrame(decryptedFrame);
-          if(md.activePowerPlusValid && md.activePowerMinusValid) {
-            read_cnt++;
-            payload[6] = read_cnt;
-            DEBUG_PRINTLN("Decrypt ok, cnt:"+String(read_cnt));
-            payload[0] = do_average(payload[0], md.activePowerPlus, read_cnt);
-            payload[3] = do_average(payload[3], md.activePowerMinus, read_cnt);
-            
-            if(payload[1] == -1) { payload[1] = md.activePowerPlus; }
-            else { payload[1] = std::min((int) payload[1], (int) md.activePowerPlus); }
-            
-            if(payload[2] == -1) { payload[2] = md.activePowerPlus; }
-            else { payload[2] = std::min((int) payload[2], (int) md.activePowerPlus); }
-            
-            if(payload[4] == -1) { payload[4] = md.activePowerMinus; }
-            else { payload[4] = std::min((int) payload[4], (int) md.activePowerMinus); }
-            
-            if(payload[5] == -1) { payload[5] = md.activePowerMinus; }
-            else { payload[5] = std::min((int) payload[5], (int) md.activePowerMinus); }
-          }
-          DEBUG_PRINTLN("Time Left"+String(break_time-millis()));
         }
       }
     }
@@ -240,6 +236,7 @@ void printHex(const VectorView& frame) {
 }
 
 bool decrypt(const VectorView& frame) {
+  DEBUG_PRINTLN("Hello from decrypt");
   if (frame.size() < headersize + footersize + 12 + 18) {
     DEBUG_PRINTLN("Invalid frame size.");
   }

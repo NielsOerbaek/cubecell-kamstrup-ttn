@@ -46,7 +46,7 @@
  *
  * Comment if your system does not support time functions
  */
-//#define MBEDTLS_HAVE_TIME
+#define MBEDTLS_HAVE_TIME
 
 /**
  * \def MBEDTLS_HAVE_TIME_DATE
@@ -67,7 +67,7 @@
  * mbedtls_platform_gmtime_r() at compile-time by using the macro
  * MBEDTLS_PLATFORM_GMTIME_R_ALT.
  */
-//#define MBEDTLS_HAVE_TIME_DATE
+#define MBEDTLS_HAVE_TIME_DATE
 
 /**
  * \def MBEDTLS_AES_C
@@ -188,7 +188,7 @@
  * Uncomment to prevent default assignment of standard functions in the
  * platform layer.
  */
-//#define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS
+#define MBEDTLS_PLATFORM_NO_STD_FUNCTIONS
 
 /**
  * \def MBEDTLS_PLATFORM_EXIT_ALT
@@ -216,7 +216,7 @@
 //#define MBEDTLS_PLATFORM_EXIT_ALT
 //#define MBEDTLS_PLATFORM_TIME_ALT
 //#define MBEDTLS_PLATFORM_FPRINTF_ALT
-//#define MBEDTLS_PLATFORM_PRINTF_ALT
+#define MBEDTLS_PLATFORM_PRINTF_ALT
 //#define MBEDTLS_PLATFORM_SNPRINTF_ALT
 //#define MBEDTLS_PLATFORM_NV_SEED_ALT
 //#define MBEDTLS_PLATFORM_SETUP_TEARDOWN_ALT
@@ -239,7 +239,7 @@
  *
  * This module enables abstraction of common (libc) functions.
  */
-//#define MBEDTLS_PLATFORM_C
+#define MBEDTLS_PLATFORM_C
 
 /**
  * \def MBEDTLS_SELF_TEST
@@ -248,6 +248,6 @@
  */
 //#define MBEDTLS_SELF_TEST
 
-//#include "check_config.h"
+#include "check_config.h"
 
 #endif /* MBEDTLS_CONFIG_H */
