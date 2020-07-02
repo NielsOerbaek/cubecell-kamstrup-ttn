@@ -184,7 +184,7 @@ void read_frame() {
       if (streamParser.pushData(kamstrup_read())) {
         VectorView frame = streamParser.getFrame();
         if (streamParser.getContentType() == 0) {
-          //DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
+          DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
           if (!decrypt(frame)){
             DEBUG_PRINTLN(F("Decrypt failed"));
             blink(100,0,0,1);
@@ -202,13 +202,13 @@ void read_frame() {
               else { payload[1] = std::min((int) payload[1], (int) md.activePowerPlus); }
               
               if(payload[2] == -1) { payload[2] = md.activePowerPlus; }
-              else { payload[2] = std::min((int) payload[2], (int) md.activePowerPlus); }
+              else { payload[2] = std::max((int) payload[2], (int) md.activePowerPlus); }
               
               if(payload[4] == -1) { payload[4] = md.activePowerMinus; }
               else { payload[4] = std::min((int) payload[4], (int) md.activePowerMinus); }
               
               if(payload[5] == -1) { payload[5] = md.activePowerMinus; }
-              else { payload[5] = std::min((int) payload[5], (int) md.activePowerMinus); }
+              else { payload[5] = std::max((int) payload[5], (int) md.activePowerMinus); }
             }
           }
         }
