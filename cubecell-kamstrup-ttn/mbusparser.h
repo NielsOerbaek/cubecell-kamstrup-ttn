@@ -111,28 +111,28 @@ MeterData parseMbusFrame(const VectorView& frame);
 
 struct MbusStreamParser {
   MbusStreamParser(uint8_t * buff, size_t bufsize);
-  int pushData(uint8_t data);
+  bool pushData(uint8_t data);
   const VectorView& getFrame();
-  /* BufferContent {
-    0: COMPLETE_FRAME,
-    1: TRASH_DATA
-  };*/
-  int getContentType() const;
+  enum BufferContent {
+    COMPLETE_FRAME,
+    TRASH_DATA
+  };
+  BufferContent getContentType() const;
 private:
   uint8_t* m_buf;
   size_t m_bufsize;
   size_t m_position = 0;
 
-  int m_parseState = 0;
-  /* ParseState {
-   0: LOOKING_FOR_START,
-   1: LOOKING_FOR_FORMAT_TYPE,
-   2: LOOKING_FOR_SIZE,
-   3: LOOKING_FOR_END,
-   */
+  enum ParseState {
+    LOOKING_FOR_START,
+    LOOKING_FOR_FORMAT_TYPE,
+    LOOKING_FOR_SIZE,
+    LOOKING_FOR_END,
+  };
+  ParseState m_parseState = LOOKING_FOR_START;
   uint16_t m_messageSize = 0;
   VectorView m_frameFound;
-  int m_bufferContent = 1;
+  BufferContent m_bufferContent = TRASH_DATA;
 };
 
 #endif

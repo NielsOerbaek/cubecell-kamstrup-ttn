@@ -10,11 +10,14 @@
 #define DEBUG_PRINT(x) Serial.print(x);
 #define DEBUG_PRINTLN(x) Serial.println(x);
 
+#include "CubeCell_NeoPixel.h"
+CubeCell_NeoPixel pixels(1, RGB, NEO_GRB + NEO_KHZ800);
+
 /* Second serial port for meter reading 
  * SoftwareSerial isnt really working, so we've made a small custom library that does the trick. 
 */
 #define KAMSTRUP_DATA_PIN GPIO0
-#define BAUD_RATE 2400
+#define BAUD_RATE 2400 // Not actually used right now.
 
 const size_t headersize = 11;
 const size_t footersize = 3;
@@ -27,7 +30,7 @@ MbusStreamParser streamParser(receiveBuffer, sizeof(receiveBuffer));
 mbedtls_gcm_context m_ctx;
 
 int8_t TX_INTERVAL = 110; // Time to wait between transmissions, not including TX windows
-//int8_t TX_INTERVAL = 10; // Time to wait between transmissions, not including TX windows
+//int8_t TX_INTERVAL = 30; // Time to wait between transmissions, not including TX windows
 
 /* LoraWan Config
 /*LoraWan channelsmask, default channels 0-7*/ 
@@ -45,30 +48,12 @@ bool keepNet = LORAWAN_NET_RESERVE;
 /* Indicates if the node is sending confirmed or unconfirmed messages */
 bool isTxConfirmed = LORAWAN_UPLINKMODE;
 /* Application port */
-uint8_t appPort = 2;
+uint8_t appPort = 1;
 
 /*the application data transmission duty cycle.  value in [ms].*/
 uint32_t appTxDutyCycle = 0;
 
 uint8_t confirmedNbTrials = 4;
-
-/* Prepares the payload of the frame */
-static void prepareTxFrame( uint8_t port )
-{
-  /*appData size is LORAWAN_APP_DATA_MAX_SIZE which is defined in "commissioning.h".
-  *appDataSize max value is LORAWAN_APP_DATA_MAX_SIZE.
-  *if enabled AT, don't modify LORAWAN_APP_DATA_MAX_SIZE, it may cause system hanging or failure.
-  *if disabled AT, LORAWAN_APP_DATA_MAX_SIZE can be modified, the max value is reference to lorawan region and SF.
-  *for example, if use REGION_CN470, 
-  *the max value for different DR can be found in MaxPayloadOfDatarateCN470 refer to DataratesCN470 and BandwidthsCN470 in "RegionCN470.h".
-  */
-    int bat = getBatteryVoltage();
-    DEBUG_PRINT(F("Sending Batt: "));
-    DEBUG_PRINTLN(F(bat));
-    appDataSize = 2;
-    appData[0] = bat & 0x000000ff;
-    appData[1] = (bat & 0x0000ff00) >> 8;
-}
 
 
 /* Payload Format: 7 2-byte integers: 14 bytes:
@@ -80,27 +65,48 @@ static void prepareTxFrame( uint8_t port )
  * 5: Max export in W
  * 6: Number of valid frames this is based on
  */
-
-int16_t payload[7];
+int16_t payload[8];
 
 int32_t read_cnt;
 int break_time;
 int time_left;
 
+/* Prepares the payload of the frame */
+static void prepareTxFrame( uint8_t port )
+{
+  /*appData size is LORAWAN_APP_DATA_MAX_SIZE which is defined in "commissioning.h".
+  *appDataSize max value is LORAWAN_APP_DATA_MAX_SIZE.
+  *if enabled AT, don't modify LORAWAN_APP_DATA_MAX_SIZE, it may cause system hanging or failure.
+  *if disabled AT, LORAWAN_APP_DATA_MAX_SIZE can be modified, the max value is reference to lorawan region and SF.
+  *for example, if use REGION_CN470, 
+  *the max value for different DR can be found in MaxPayloadOfDatarateCN470 refer to DataratesCN470 and BandwidthsCN470 in "RegionCN470.h".
+  */
+    payload[7] = getBatteryVoltage();
+    appDataSize = sizeof(payload);
+    memcpy(appData, payload, appDataSize);
+    DEBUG_PRINT(F("Sending Payload: "));
+    DEBUG_PRINTLN(appDataSize);
+}
+
 void setup() {
   DEBUG_BEGIN
 
-  //DEBUG_PRINTLN("DEVICE_STATE_INIT");
-  //deviceState = DEVICE_STATE_INIT;
-  //LoRaWAN.ifskipjoin();
+  DEBUG_PRINTLN("DEVICE_STATE_INIT");
+  deviceState = DEVICE_STATE_INIT;
+  LoRaWAN.ifskipjoin();
+
+  DEBUG_PRINTLN("INIT LED");
+  pinMode(Vext,OUTPUT);
+  digitalWrite(Vext,LOW); //SET POWER
+  pixels.begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
+  pixels.clear(); // Set all pixel colors to 'off'
+
   
   DEBUG_PRINTLN("Initiating KamstrupSerial on RX=GPIO0");
   kamstrup_serial_init(KAMSTRUP_DATA_PIN);
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
   DEBUG_PRINTLN("Setup completed");
-
-  read_frame();
 }
 
 void loop()
@@ -151,6 +157,16 @@ void loop()
   }
 }
 
+void blink(int r, int g, int b, int times) {
+  for(int i = 0; i < times; i++) {
+    pixels.setPixelColor(0, pixels.Color(r, g, b));
+    pixels.show();
+    delay(100); // Pause before next pass through loop
+    pixels.setPixelColor(0, pixels.Color(0, 0, 0));
+    pixels.show();
+    delay(100);
+  }
+}
 
 void read_frame() {
   DEBUG_PRINTLN("read_frame");
@@ -158,44 +174,27 @@ void read_frame() {
   read_cnt = 0;
   break_time = millis() + TX_INTERVAL*1000;
   time_left;
-  int width = 0;
-  int code = -1;
   while(true) {
     if(millis() > break_time) {
         DEBUG_PRINTLN("Timeout! Got "+String(read_cnt)+" frames.");
+        blink(0,0,100,2);
         return;            
       }
-      if((millis()-break_time)%3000 == 0) {
-        DEBUG_PRINTLN("");
-        width = 0;
-        delay(1);
-        
-      }
     while (kamstrup_available() > 0) {
-      uint8_t val = kamstrup_read();
-      if(width%20 == 0) {
-        DEBUG_PRINTLN("");
-      } 
-      width++;
-      printHex2(val);
-      int new_code = streamParser.pushData(val);
-      if(code != new_code){
-        DEBUG_PRINTLN("PushData code: "+String(new_code));
-        code = new_code;
-      }
-      if (code == 0) {
-        DEBUG_PRINTLN("\nPushdata returned True");
+      if (streamParser.pushData(kamstrup_read())) {
         VectorView frame = streamParser.getFrame();
         if (streamParser.getContentType() == 0) {
-          DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
+          //DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
           if (!decrypt(frame)){
             DEBUG_PRINTLN(F("Decrypt failed"));
+            blink(100,0,0,1);
           } else {
             MeterData md = parseMbusFrame(decryptedFrame);
             if(md.activePowerPlusValid && md.activePowerMinusValid) {
               read_cnt++;
               payload[6] = read_cnt;
               DEBUG_PRINTLN("Decrypt ok, cnt:"+String(read_cnt));
+              blink(0,100,0,read_cnt);
               payload[0] = do_average(payload[0], md.activePowerPlus, read_cnt);
               payload[3] = do_average(payload[3], md.activePowerMinus, read_cnt);
               

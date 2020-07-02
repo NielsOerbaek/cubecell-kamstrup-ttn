@@ -1,12 +1,6 @@
 #include "mbusparser.h"
 #include <cassert>
 
-MeterData result;
-std::vector<uint8_t> needle = { 0xff, 0x80, 0x00, 0x00 };
-unsigned int frameFormat;
-size_t messageSize;
-size_t dateTimeEnd;
-
 size_t VectorView::find(const std::vector<uint8_t>& needle) const
 {
   for (const uint8_t* it = m_start; it < (m_start+m_size-needle.size()); ++it) {
@@ -133,11 +127,13 @@ uint32_t getPower(const VectorView& frame,
 
 MeterData parseMbusFrame(const VectorView& frame)
 {
-  frameFormat = frame[1] & 0xF0;
-  messageSize = ((frame[1] & 0x0F) << 8) | frame[2];
+  MeterData result;
+  unsigned int frameFormat = frame[1] & 0xF0;
+  size_t messageSize = ((frame[1] & 0x0F) << 8) | frame[2];
   result.parseResultBufferSize = frame.size();
   result.parseResultMessageSize = messageSize;
-  dateTimeEnd = frame.find(needle);
+  std::vector<uint8_t> needle = { 0xff, 0x80, 0x00, 0x00 };
+  size_t dateTimeEnd = frame.find(needle);
   if (dateTimeEnd > 0) {
     result.listId = (frame[dateTimeEnd+5] & 0xF0) >> 4;
   }
@@ -189,46 +185,46 @@ MbusStreamParser::MbusStreamParser(uint8_t* buf, size_t bufsize)
 {
 }
 
-int MbusStreamParser::pushData(uint8_t data)
+bool MbusStreamParser::pushData(uint8_t data)
 {
   if (m_position >= m_bufsize) {
     // Reached end of buffer
     m_position = 0;
-    m_parseState = 0;
+    m_parseState = LOOKING_FOR_START;
     m_messageSize = 0;
-    m_bufferContent = 1;
+    m_bufferContent = TRASH_DATA;
     m_frameFound = VectorView(m_buf, m_bufsize);
-    return m_parseState;
+    return true;
   }
   switch (m_parseState) {
-  case 0:
+  case LOOKING_FOR_START:
     m_buf[m_position++] = data;
     if (data == 0x7E) {
       // std::cout << "Found frame start. Pos=" << m_position << std::endl;
-      m_parseState = 1;
+      m_parseState = LOOKING_FOR_FORMAT_TYPE;
     }
-    return m_parseState;
-  case 1:
+    break;
+  case LOOKING_FOR_FORMAT_TYPE:
     m_buf[m_position++] = data;
     assert(m_position > 1);
     if ((data & 0xF0) == 0xA0) {
       // std::cout << "Found frame format type (pos=" << m_position << "): " << std::hex << (unsigned)data << std::dec << std::endl;
-      m_parseState = 2;
+      m_parseState = LOOKING_FOR_SIZE;
       if (m_position-2 > 0) {
-        m_bufferContent = 1;
+        m_bufferContent = TRASH_DATA;
         m_frameFound = VectorView(m_buf, m_position-2);
-        return m_parseState;
+        return true;
       }
     } else if (data == 0x7E) {
       // std::cout << "Found frame start instead of format type: " << std::hex << (unsigned)data << std::dec << std::endl;
-      m_bufferContent = 1;
+      m_bufferContent = TRASH_DATA;
       m_frameFound = VectorView(m_buf, m_position-1);
-      return m_parseState;
+      return true;
     } else {
-      m_parseState = 0;
+      m_parseState = LOOKING_FOR_START;
     }
-    return m_parseState;
-  case 2:
+    break;
+  case LOOKING_FOR_SIZE:
     assert(m_position > 0);
     // Move start of frame to start of buffer
     m_buf[0] = 0x7E;
@@ -237,30 +233,29 @@ int MbusStreamParser::pushData(uint8_t data)
     // std::cout << "Message size is: " << m_messageSize << ". now looking for end" << std::endl;
     m_buf[2] = data;
     m_position = 3;
-    m_parseState = 3;
-    return m_parseState;
-  case 3:
+    m_parseState = LOOKING_FOR_END;
+    break;
+  case LOOKING_FOR_END:
     m_buf[m_position++] = data;
     if (m_position == (m_messageSize+2)) {
       if (data == 0x7E) {
-        m_bufferContent = 0;
+        m_bufferContent = COMPLETE_FRAME;
         m_frameFound = VectorView(m_buf, m_position);
-        m_parseState = 0;
+        m_parseState = LOOKING_FOR_START;
         m_position = 0;
         // std::cout << "Found end. Returning complete frame. Setting position=0" << std::endl;
-        return m_parseState;
+        return true;
       } else {
         // std::cout << "Unexpected byte at end position: " << std::hex << (unsigned)data << std::dec << std::endl;
-        m_parseState = 0;
-        return m_parseState;
+        m_parseState = LOOKING_FOR_START;
       }
     }
     break;
   }
-  return m_parseState;
+  return false;
 }
 
-int MbusStreamParser::getContentType() const
+MbusStreamParser::BufferContent MbusStreamParser::getContentType() const
 {
   return m_bufferContent;
 }
