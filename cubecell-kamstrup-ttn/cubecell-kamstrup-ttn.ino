@@ -87,26 +87,20 @@ int32_t read_cnt;
 int break_time;
 int time_left;
 
-uint8_t system_title[8];
-uint8_t initialization_vector[12];
-uint8_t additional_authenticated_data[17];
-uint8_t authentication_tag[12];
-uint8_t cipher_text[10];
-uint8_t plaintext[10];
-
-
 void setup() {
   DEBUG_BEGIN
 
-  DEBUG_PRINTLN("DEVICE_STATE_INIT");
-  deviceState = DEVICE_STATE_INIT;
-  LoRaWAN.ifskipjoin();
+  //DEBUG_PRINTLN("DEVICE_STATE_INIT");
+  //deviceState = DEVICE_STATE_INIT;
+  //LoRaWAN.ifskipjoin();
   
   DEBUG_PRINTLN("Initiating KamstrupSerial on RX=GPIO0");
   kamstrup_serial_init(KAMSTRUP_DATA_PIN);
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
   DEBUG_PRINTLN("Setup completed");
+
+  read_frame();
 }
 
 void loop()
@@ -165,6 +159,7 @@ void read_frame() {
   break_time = millis() + TX_INTERVAL*1000;
   time_left;
   int width = 0;
+  int code = -1;
   while(true) {
     if(millis() > break_time) {
         DEBUG_PRINTLN("Timeout! Got "+String(read_cnt)+" frames.");
@@ -183,10 +178,15 @@ void read_frame() {
       } 
       width++;
       printHex2(val);
-      if (streamParser.pushData(val)) {
+      int new_code = streamParser.pushData(val);
+      if(code != new_code){
+        DEBUG_PRINTLN("PushData code: "+String(new_code));
+        code = new_code;
+      }
+      if (code == 0) {
         DEBUG_PRINTLN("\nPushdata returned True");
         VectorView frame = streamParser.getFrame();
-        if (streamParser.getContentType() == MbusStreamParser::COMPLETE_FRAME) {
+        if (streamParser.getContentType() == 0) {
           DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
           if (!decrypt(frame)){
             DEBUG_PRINTLN(F("Decrypt failed"));
@@ -236,23 +236,31 @@ void printHex(const VectorView& frame) {
 }
 
 bool decrypt(const VectorView& frame) {
-  DEBUG_PRINTLN("Hello from decrypt");
+
   if (frame.size() < headersize + footersize + 12 + 18) {
-    DEBUG_PRINTLN("Invalid frame size.");
+    Serial.println("Invalid frame size.");
   }
+
   memcpy(decryptedFrameBuffer, &frame.front(), frame.size());
 
+  uint8_t system_title[8];
   memcpy(system_title, decryptedFrameBuffer + headersize + 2, 8);
 
+  uint8_t initialization_vector[12];
   memcpy(initialization_vector, system_title, 8);
   memcpy(initialization_vector + 8, decryptedFrameBuffer + headersize + 14, 4);
 
+  uint8_t additional_authenticated_data[17];
   memcpy(additional_authenticated_data, decryptedFrameBuffer + headersize + 13, 1);
   memcpy(additional_authenticated_data + 1, authentication_key, 16);
 
+  uint8_t authentication_tag[12];
   memcpy(authentication_tag, decryptedFrameBuffer + headersize + frame.size() - headersize - footersize - 12, 12);
 
+  uint8_t cipher_text[frame.size() - headersize - footersize - 18 - 12];
   memcpy(cipher_text, decryptedFrameBuffer + headersize + 18, frame.size() - headersize - footersize - 12 - 18);
+
+  uint8_t plaintext[sizeof(cipher_text)];
 
   mbedtls_gcm_init(&m_ctx);
   int success = mbedtls_gcm_setkey(&m_ctx, MBEDTLS_CIPHER_ID_AES, encryption_key, sizeof(encryption_key) * 8);
