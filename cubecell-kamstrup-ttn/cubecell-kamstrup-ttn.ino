@@ -1,10 +1,15 @@
 #include "LoRaWan_APP.h"
 #include "Arduino.h"
 
+/* The Heltec-provided "Arduino.h" defines min and max as macros that can only take two arguments
+ * But some of the libraries we need use other variations, so we undef them
+ */
+#undef max
+#undef min
+
 #include "gcm.h"
 #include "mbusparser.h"
 #include "secrets.h" // <-- create this file using "secrets.h.TEMPLATE"
-#include "KamstrupSerial.h"
 
 #define DEBUG_BEGIN Serial.begin(115200);
 #define DEBUG_PRINT(x) Serial.print(x);
@@ -16,6 +21,7 @@ CubeCell_NeoPixel pixels(1, RGB, NEO_GRB + NEO_KHZ800);
 /* Second serial port for meter reading 
  * SoftwareSerial isnt really working, so we've made a small custom library that does the trick. 
 */
+#include "KamstrupSerial.h"
 #define KAMSTRUP_DATA_PIN GPIO0
 #define BAUD_RATE 2400 // Not actually used right now.
 
@@ -28,6 +34,15 @@ uint8_t decryptedFrameBuffer[400];
 VectorView decryptedFrame(decryptedFrameBuffer, 0);
 MbusStreamParser streamParser(receiveBuffer, sizeof(receiveBuffer));
 mbedtls_gcm_context m_ctx;
+
+/* These were moved from dynamically allocated from within the decrypt() */
+uint8_t system_title[8];
+uint8_t initialization_vector[12];
+uint8_t additional_authenticated_data[17];
+uint8_t authentication_tag[12];
+uint8_t cipher_text[400];
+uint8_t plaintext[400];
+uint16_t cipher_text_size;
 
 int8_t TX_INTERVAL = 110; // Time to wait between transmissions, not including TX windows
 //int8_t TX_INTERVAL = 30; // Time to wait between transmissions, not including TX windows
@@ -64,20 +79,13 @@ uint8_t confirmedNbTrials = 4;
  * 4: Min export in W
  * 5: Max export in W
  * 6: Number of valid frames this is based on
+ * 7: Battery voltage
  */
 int16_t payload[8];
 
 int32_t read_cnt;
 int break_time;
 int time_left;
-
-uint8_t system_title[8];
-uint8_t initialization_vector[12];
-uint8_t additional_authenticated_data[17];
-uint8_t authentication_tag[12];
-uint8_t cipher_text[400];
-uint8_t plaintext[400];
-uint16_t cipher_text_size;
 
 /* Prepares the payload of the frame */
 static void prepareTxFrame( uint8_t port )
