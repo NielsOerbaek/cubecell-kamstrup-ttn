@@ -10,6 +10,9 @@ function Decoder(bytes, port) {
     decoded.min_ex = (bytes[9] << 8) + bytes[8];
     decoded.max_ex = (bytes[11] << 8) + bytes[10];
     decoded.num_frames = (bytes[13] << 8) + bytes[12];
+    if(bytes.length > 14) {
+      decoded.bat = (bytes[15] << 8) + bytes[14];
+    }
   }
   if(port == 2) {
     decoded.bat = (bytes[1] << 8) + bytes[0];
