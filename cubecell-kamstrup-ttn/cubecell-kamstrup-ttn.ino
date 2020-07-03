@@ -23,8 +23,8 @@ const size_t headersize = 11;
 const size_t footersize = 3;
 uint8_t encryption_key[16];
 uint8_t authentication_key[16];
-uint8_t receiveBuffer[500];
-uint8_t decryptedFrameBuffer[500];
+uint8_t receiveBuffer[400];
+uint8_t decryptedFrameBuffer[400];
 VectorView decryptedFrame(decryptedFrameBuffer, 0);
 MbusStreamParser streamParser(receiveBuffer, sizeof(receiveBuffer));
 mbedtls_gcm_context m_ctx;
@@ -71,6 +71,14 @@ int32_t read_cnt;
 int break_time;
 int time_left;
 
+uint8_t system_title[8];
+uint8_t initialization_vector[12];
+uint8_t additional_authenticated_data[17];
+uint8_t authentication_tag[12];
+uint8_t cipher_text[400];
+uint8_t plaintext[400];
+uint16_t cipher_text_size;
+
 /* Prepares the payload of the frame */
 static void prepareTxFrame( uint8_t port )
 {
@@ -90,11 +98,11 @@ static void prepareTxFrame( uint8_t port )
 
 void setup() {
   DEBUG_BEGIN
-
+  blink(10,10,10,1);
   DEBUG_PRINTLN("DEVICE_STATE_INIT");
   deviceState = DEVICE_STATE_INIT;
   LoRaWAN.ifskipjoin();
-
+  blink(10,10,10,2);
   DEBUG_PRINTLN("INIT LED");
   pinMode(Vext,OUTPUT);
   digitalWrite(Vext,LOW); //SET POWER
@@ -107,6 +115,7 @@ void setup() {
   hexStr2bArr(encryption_key, conf_key, sizeof(encryption_key));
   hexStr2bArr(authentication_key, conf_authkey, sizeof(authentication_key));
   DEBUG_PRINTLN("Setup completed");
+  blink(10,10,10,3);
 }
 
 void loop()
@@ -130,9 +139,10 @@ void loop()
     }
     case DEVICE_STATE_SEND:
     {
-      read_frame();
-      prepareTxFrame( appPort );
-      LoRaWAN.send();
+      if(read_frame()) {
+        prepareTxFrame( appPort );
+        LoRaWAN.send();
+      }
       deviceState = DEVICE_STATE_CYCLE;
       break;
     }
@@ -168,7 +178,7 @@ void blink(int r, int g, int b, int times) {
   }
 }
 
-void read_frame() {
+bool read_frame() {
   DEBUG_PRINTLN("read_frame");
   reset_payload();
   read_cnt = 0;
@@ -177,24 +187,27 @@ void read_frame() {
   while(true) {
     if(millis() > break_time) {
         DEBUG_PRINTLN("Timeout! Got "+String(read_cnt)+" frames.");
-        blink(0,0,100,2);
-        return;            
+        if(read_cnt > 0) {  // Got valid values
+          blink(0,0,20,3);
+          return true;     
+        } else {            // No valid values
+          blink(20,0,0,3);
+          return false;    
+        }
       }
     while (kamstrup_available() > 0) {
       if (streamParser.pushData(kamstrup_read())) {
         VectorView frame = streamParser.getFrame();
         if (streamParser.getContentType() == 0) {
-          DEBUG_PRINTLN(F("Frame complete. Decrypting..."));
           if (!decrypt(frame)){
-            DEBUG_PRINTLN(F("Decrypt failed"));
-            blink(100,0,0,1);
+            blink(20,0,0,1);
           } else {
             MeterData md = parseMbusFrame(decryptedFrame);
             if(md.activePowerPlusValid && md.activePowerMinusValid) {
               read_cnt++;
               payload[6] = read_cnt;
               DEBUG_PRINTLN("Decrypt ok, cnt:"+String(read_cnt));
-              blink(0,100,0,read_cnt);
+              blink(0,20,0,read_cnt);
               payload[0] = do_average(payload[0], md.activePowerPlus, read_cnt);
               payload[3] = do_average(payload[3], md.activePowerMinus, read_cnt);
               
@@ -241,25 +254,24 @@ bool decrypt(const VectorView& frame) {
   }
 
   memcpy(decryptedFrameBuffer, &frame.front(), frame.size());
-
-  uint8_t system_title[8];
+  
   memcpy(system_title, decryptedFrameBuffer + headersize + 2, 8);
-
-  uint8_t initialization_vector[12];
+  
   memcpy(initialization_vector, system_title, 8);
   memcpy(initialization_vector + 8, decryptedFrameBuffer + headersize + 14, 4);
 
-  uint8_t additional_authenticated_data[17];
   memcpy(additional_authenticated_data, decryptedFrameBuffer + headersize + 13, 1);
   memcpy(additional_authenticated_data + 1, authentication_key, 16);
 
-  uint8_t authentication_tag[12];
+  cipher_text_size = frame.size() - headersize - footersize - 18 - 12;
+  if(cipher_text_size > 400) {
+    Serial.println("Decrypt failed: Cipher-text too big for memory");
+    return false;
+  }
+  
   memcpy(authentication_tag, decryptedFrameBuffer + headersize + frame.size() - headersize - footersize - 12, 12);
 
-  uint8_t cipher_text[frame.size() - headersize - footersize - 18 - 12];
-  memcpy(cipher_text, decryptedFrameBuffer + headersize + 18, frame.size() - headersize - footersize - 12 - 18);
-
-  uint8_t plaintext[sizeof(cipher_text)];
+  memcpy(cipher_text, decryptedFrameBuffer + headersize + 18, cipher_text_size);
 
   mbedtls_gcm_init(&m_ctx);
   int success = mbedtls_gcm_setkey(&m_ctx, MBEDTLS_CIPHER_ID_AES, encryption_key, sizeof(encryption_key) * 8);
@@ -267,7 +279,7 @@ bool decrypt(const VectorView& frame) {
     Serial.println("Setkey failed: " + String(success));
     return false;
   }
-  success = mbedtls_gcm_auth_decrypt(&m_ctx, sizeof(cipher_text), initialization_vector, sizeof(initialization_vector),
+  success = mbedtls_gcm_auth_decrypt(&m_ctx, cipher_text_size, initialization_vector, sizeof(initialization_vector),
                                      additional_authenticated_data, sizeof(additional_authenticated_data), authentication_tag, sizeof(authentication_tag),
                                      cipher_text, plaintext);
   if (0 != success) {
@@ -277,7 +289,7 @@ bool decrypt(const VectorView& frame) {
   mbedtls_gcm_free(&m_ctx);
 
   //copy replace encrypted data with decrypted for mbusparser library. Checksum not updated. Hopefully not needed
-  memcpy(decryptedFrameBuffer + headersize + 18, plaintext, sizeof(plaintext));
+  memcpy(decryptedFrameBuffer + headersize + 18, plaintext, cipher_text_size);
   decryptedFrame = VectorView(decryptedFrameBuffer, frame.size());
 
   return true;
