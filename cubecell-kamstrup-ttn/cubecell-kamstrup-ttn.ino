@@ -63,10 +63,10 @@ bool keepNet = LORAWAN_NET_RESERVE;
 /* Indicates if the node is sending confirmed or unconfirmed messages */
 bool isTxConfirmed = LORAWAN_UPLINKMODE;
 /* Application port */
-uint8_t appPort = 1;
+uint8_t appPort = 1; //NOTE: Back to the proper appPort
 
 /*the application data transmission duty cycle.  value in [ms].*/
-uint32_t appTxDutyCycle = 0;
+uint32_t appTxDutyCycle = 0; // We don't use this. We handle the timeouts in read_frame() instead.
 
 uint8_t confirmedNbTrials = 4;
 
@@ -105,6 +105,7 @@ static void prepareTxFrame( uint8_t port )
 }
 
 void setup() {
+  boardInitMcu();
   DEBUG_BEGIN
   blink(10,10,10,1);
   DEBUG_PRINTLN("DEVICE_STATE_INIT");
@@ -116,7 +117,6 @@ void setup() {
   digitalWrite(Vext,LOW); //SET POWER
   pixels.begin(); // INITIALIZE NeoPixel strip object (REQUIRED)
   pixels.clear(); // Set all pixel colors to 'off'
-
   
   DEBUG_PRINTLN("Initiating KamstrupSerial on RX=GPIO0");
   kamstrup_serial_init(KAMSTRUP_DATA_PIN);
@@ -259,6 +259,13 @@ bool decrypt(const VectorView& frame) {
 
   if (frame.size() < headersize + footersize + 12 + 18) {
     Serial.println("Invalid frame size.");
+    return false;
+  }
+
+  cipher_text_size = frame.size() - headersize - footersize - 18 - 12;
+  if(cipher_text_size > 400) {
+    Serial.println("Decrypt failed: Cipher-text too big for memory");
+    return false;
   }
 
   memcpy(decryptedFrameBuffer, &frame.front(), frame.size());
@@ -270,12 +277,6 @@ bool decrypt(const VectorView& frame) {
 
   memcpy(additional_authenticated_data, decryptedFrameBuffer + headersize + 13, 1);
   memcpy(additional_authenticated_data + 1, authentication_key, 16);
-
-  cipher_text_size = frame.size() - headersize - footersize - 18 - 12;
-  if(cipher_text_size > 400) {
-    Serial.println("Decrypt failed: Cipher-text too big for memory");
-    return false;
-  }
   
   memcpy(authentication_tag, decryptedFrameBuffer + headersize + frame.size() - headersize - footersize - 12, 12);
 
@@ -285,6 +286,9 @@ bool decrypt(const VectorView& frame) {
   int success = mbedtls_gcm_setkey(&m_ctx, MBEDTLS_CIPHER_ID_AES, encryption_key, sizeof(encryption_key) * 8);
   if (0 != success) {
     Serial.println("Setkey failed: " + String(success));
+    // NOTE: For some reason we end up here after a while. And we never decrypt successfully again. So as a fail-safe we just restart the board now
+    // TODO
+    reset_board();
     return false;
   }
   success = mbedtls_gcm_auth_decrypt(&m_ctx, cipher_text_size, initialization_vector, sizeof(initialization_vector),
@@ -301,6 +305,10 @@ bool decrypt(const VectorView& frame) {
   decryptedFrame = VectorView(decryptedFrameBuffer, frame.size());
 
   return true;
+}
+
+void reset_board() {
+  HW_Reset(0);
 }
 
 void hexStr2bArr(uint8_t* dest, const char* source, int bytes_n)
