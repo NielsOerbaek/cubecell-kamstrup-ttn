@@ -49,7 +49,7 @@ static const uint8_t PROGMEM PAYLOAD[] = {
 #define TXD2 17
 #define BAUD_RATE 2400
 
-int send_interval = 4 * 1000; // Send every ten seconds
+int send_interval = 10 * 1000; // Send every ten seconds
 int last_send;
 
 void setup() {
