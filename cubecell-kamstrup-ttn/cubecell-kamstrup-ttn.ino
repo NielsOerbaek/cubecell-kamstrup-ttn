@@ -70,7 +70,6 @@ uint32_t appTxDutyCycle = 0; // We don't use this. We handle the timeouts in rea
 
 uint8_t confirmedNbTrials = 4;
 
-
 /* Payload Format: 7 2-byte integers: 14 bytes:
  * 0: Avg import in W
  * 1: Min import in W
@@ -86,6 +85,8 @@ int16_t payload[8];
 int32_t read_cnt;
 int break_time;
 int time_left;
+int no_valid_timeout = 2; // After two times two minutes with no valid reads, we think something is probably wrong. 
+int no_valid_counter = 0;
 
 /* Prepares the payload of the frame */
 static void prepareTxFrame( uint8_t port )
@@ -97,15 +98,23 @@ static void prepareTxFrame( uint8_t port )
   *for example, if use REGION_CN470, 
   *the max value for different DR can be found in MaxPayloadOfDatarateCN470 refer to DataratesCN470 and BandwidthsCN470 in "RegionCN470.h".
   */
-    payload[7] = getBatteryVoltage();
-    appDataSize = sizeof(payload);
-    memcpy(appData, payload, appDataSize);
-    DEBUG_PRINT(F("Sending Payload: "));
-    DEBUG_PRINTLN(appDataSize);
+    appPort = port;
+    if(port == 1) { // If data is good
+      payload[7] = getBatteryVoltage();
+      appDataSize = sizeof(payload);
+      memcpy(appData, payload, appDataSize);
+      DEBUG_PRINT(F("Sending Payload: "));
+      DEBUG_PRINTLN(appDataSize);
+      return;
+    }
+    if(port == 4) { // Sending reset msg
+      appDataSize = 1;
+      appData[0] = 1;
+    }
 }
 
 void setup() {
-  boardInitMcu();
+  //boardInitMcu();
   DEBUG_BEGIN
   blink(10,10,10,1);
   DEBUG_PRINTLN("DEVICE_STATE_INIT");
@@ -148,8 +157,17 @@ void loop()
     case DEVICE_STATE_SEND:
     {
       if(read_frame()) {
+        no_valid_counter = 0;
         prepareTxFrame( appPort );
         LoRaWAN.send();
+      } else {
+        no_valid_counter++;
+        if(no_valid_counter >= no_valid_timeout) {
+          prepareTxFrame(4);
+          LoRaWAN.send();
+          delay(5000); // Give a little time to send
+          reset_board();
+        }
       }
       deviceState = DEVICE_STATE_CYCLE;
       break;
@@ -286,9 +304,6 @@ bool decrypt(const VectorView& frame) {
   int success = mbedtls_gcm_setkey(&m_ctx, MBEDTLS_CIPHER_ID_AES, encryption_key, sizeof(encryption_key) * 8);
   if (0 != success) {
     Serial.println("Setkey failed: " + String(success));
-    // NOTE: For some reason we end up here after a while. And we never decrypt successfully again. So as a fail-safe we just restart the board now
-    // TODO
-    reset_board();
     return false;
   }
   success = mbedtls_gcm_auth_decrypt(&m_ctx, cipher_text_size, initialization_vector, sizeof(initialization_vector),
